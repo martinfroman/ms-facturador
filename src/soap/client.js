@@ -1,5 +1,10 @@
 import axios from 'axios';
+import https from 'https';
 import { XMLParser } from 'fast-xml-parser';
+
+const httpsAgent = new https.Agent({
+  ciphers: 'DEFAULT:@SECLEVEL=0',
+});
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -37,6 +42,7 @@ export async function soapRequest(url, action, bodyXml) {
       },
       timeout: 30_000,
       validateStatus: () => true,
+      httpsAgent,
     });
     data = response.data;
     console.log('[SOAP] Respuesta en', Date.now() - start, 'ms, status:', response.status);
