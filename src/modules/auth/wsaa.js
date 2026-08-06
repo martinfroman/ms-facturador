@@ -1,8 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
-import { execSync } from 'child_process';
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
+import forge from 'node-forge';
 import { soapRequest } from '../../soap/client.js';
 import { config } from '../../config.js';
 import { getCachedToken, setCachedToken } from './tokenCache.js';
@@ -36,40 +33,37 @@ function generateTRA(service) {
 </loginTicketRequest>`;
 }
 
-// ─── Firma PKCS#7 (CMS SignedData) usando OpenSSL ───────────────────────────
+// ─── Firma PKCS#7 (CMS SignedData) usando node-forge ────────────────────────
 //
 // AFIP requiere que el TRA esté firmado en formato CMS/PKCS#7 SignedData.
-// Usamos OpenSSL como proceso externo porque genera firmas 100% compatibles.
-//
-// Equivalente a:
-//   openssl cms -sign -in tra.xml -out tra.cms -signer cert.crt -inkey key.key -nodetach -outform DER
+// Usamos node-forge (JS puro) para compatibilidad con entornos serverless (Vercel, Lambda, etc).
 
 function signTRA(traXml, certificado, clavePrivada) {
-  const tmpDir = os.tmpdir();
-  const timestamp = Date.now();
-  const xmlFile = path.join(tmpDir, `tra_${timestamp}.xml`);
-  const cmsFile = path.join(tmpDir, `tra_${timestamp}.cms`);
-  const certFile = path.join(tmpDir, `cert_${timestamp}.pem`);
-  const keyFile = path.join(tmpDir, `key_${timestamp}.pem`);
+  const certPem = normalizePem(certificado, 'CERTIFICATE');
+  const keyPem = normalizePem(clavePrivada, 'RSA PRIVATE KEY');
 
-  try {
-    // Escribir archivos temporales
-    fs.writeFileSync(xmlFile, traXml);
-    fs.writeFileSync(certFile, normalizePem(certificado, 'CERTIFICATE'));
-    fs.writeFileSync(keyFile, normalizePem(clavePrivada, 'RSA PRIVATE KEY'));
+  const cert = forge.pki.certificateFromPem(certPem);
+  const privateKey = forge.pki.privateKeyFromPem(keyPem);
 
-    const cmd = `openssl cms -sign -in "${xmlFile}" -out "${cmsFile}" -signer "${certFile}" -inkey "${keyFile}" -nodetach -outform DER`;
-    execSync(cmd, { stdio: 'pipe' });
+  const p7 = forge.pkcs7.createSignedData();
+  p7.content = forge.util.createBuffer(traXml, 'utf8');
+  p7.addCertificate(cert);
+  p7.addSigner({
+    key: privateKey,
+    certificate: cert,
+    digestAlgorithm: forge.pki.oids.sha256,
+    authenticatedAttributes: [
+      { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
+      { type: forge.pki.oids.messageDigest },
+      { type: forge.pki.oids.signingTime, value: new Date() },
+    ],
+  });
 
-    const cmsBytes = fs.readFileSync(cmsFile);
-    return cmsBytes.toString('base64').replace(/\n/g, '').replace(/\r/g, '');
-  } finally {
-    // Limpiar archivos temporales
-    try { fs.unlinkSync(xmlFile); } catch {}
-    try { fs.unlinkSync(cmsFile); } catch {}
-    try { fs.unlinkSync(certFile); } catch {}
-    try { fs.unlinkSync(keyFile); } catch {}
-  }
+  p7.sign();
+
+  const asn1 = p7.toAsn1();
+  const der = forge.asn1.toDer(asn1);
+  return forge.util.encode64(der.getBytes()).replace(/\n/g, '').replace(/\r/g, '');
 }
 
 /**
@@ -155,7 +149,7 @@ export async function authenticate(cuit, certificado, clavePrivada, service = 'w
   const traXml = generateTRA(service);
   console.log('[WSAA] TRA generado');
 
-  console.log('[WSAA] Firmando TRA con OpenSSL...');
+  console.log('[WSAA] Firmando TRA...');
   const cmsBase64 = signTRA(traXml, certificado, clavePrivada);
   console.log('[WSAA] TRA firmado, longitud CMS:', cmsBase64.length);
 
