@@ -1,8 +1,10 @@
 import express from 'express';
+import cors from 'cors';
 import { facturar } from './modules/factura/wsfe.js';
 import { generarPDF } from './modules/pdf/generator.js';
 
 export const app = express();
+app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 
 /**
