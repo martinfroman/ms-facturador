@@ -31,6 +31,7 @@ export async function soapRequest(url, action, bodyXml) {
 </soapenv:Envelope>`;
 
   console.log('[SOAP] POST', url, '| Action:', action);
+  console.log('[SOAP] Request body:\n', envelope);
   const start = Date.now();
   
   let data;
