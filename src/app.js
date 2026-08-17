@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { facturar } from './modules/factura/wsfe.js';
+import { facturar, getCondicionesIVAReceptor } from './modules/factura/wsfe.js';
 import { generarPDF } from './modules/pdf/generator.js';
 
 export const app = express();
@@ -30,6 +30,7 @@ export function calcularImporte(items) {
  *   - clavePrivada: Contenido de la clave privada RSA (PEM o Base64)
  *   - items: Array de items con { descripcion, cantidad, precioUnitario }
  *   - importe: (opcional si se envían items) Importe total
+ *   - condicionIVAReceptorId: (opcional) ID de condición IVA del receptor (1=RI, 5=CF, 6=Mono, etc.)
  *   - puntoVenta, cbteTipo, docTipo, docNro, etc.
  */
 app.post('/facturar', async (req, res) => {
@@ -171,6 +172,43 @@ app.post('/generar-pdf', async (req, res) => {
     return res.status(500).json({
       success: false,
       error: { message: error.message },
+    });
+  }
+});
+
+/**
+ * POST /condiciones-iva-receptor
+ * 
+ * Obtiene las condiciones de IVA válidas para receptores según ARCA.
+ * Útil para saber qué condicionIVAReceptorId enviar en /facturar.
+ * 
+ * Body:
+ *   - cuit: CUIT del emisor
+ *   - certificado: Certificado X.509
+ *   - clavePrivada: Clave privada RSA
+ */
+app.post('/condiciones-iva-receptor', async (req, res) => {
+  try {
+    const { cuit, certificado, clavePrivada } = req.body;
+
+    if (!cuit || !certificado || !clavePrivada) {
+      return res.status(400).json({
+        success: false,
+        error: 'Faltan campos requeridos: cuit, certificado, clavePrivada',
+      });
+    }
+
+    const condiciones = await getCondicionesIVAReceptor(cuit, certificado, clavePrivada);
+
+    return res.json({
+      success: true,
+      data: condiciones,
+    });
+  } catch (error) {
+    const status = error.name === 'AfipError' ? 502 : 500;
+    return res.status(status).json({
+      success: false,
+      error: error.toJSON?.() ?? { message: error.message },
     });
   }
 });

@@ -61,6 +61,53 @@ async function getUltimoComprobante(token, sign, cuit, puntoVenta, cbteTipo) {
 //  docTipo:  80=CUIT, 86=CUIL, 96=DNI, 99=Consumidor Final
 //  concepto: 1=Productos, 2=Servicios, 3=Productos y Servicios
 //  IVA ids:  3=0%, 4=10.5%, 5=21%, 6=27%
+//  condicionIVAReceptor: 1=Resp.Inscripto, 4=Exento, 5=Consumidor Final, 6=Monotributo, etc.
+
+/**
+ * Obtiene las condiciones de IVA válidas para receptores.
+ * Cada condición indica para qué tipos de comprobante (A, B, C, M) aplica.
+ */
+export async function getCondicionesIVAReceptor(cuit, certificado, clavePrivada) {
+  const { token, sign } = await authenticate(cuit, certificado, clavePrivada, 'wsfe');
+
+  const body = `<ar:FEParamGetCondicionIvaReceptor xmlns:ar="${NS}">
+    ${authBlock(token, sign, cuit)}
+  </ar:FEParamGetCondicionIvaReceptor>`;
+
+  const result = await soapRequest(
+    config.wsfeUrl,
+    `${NS}FEParamGetCondicionIvaReceptor`,
+    body,
+  );
+
+  const resp = result.FEParamGetCondicionIvaReceptorResponse?.FEParamGetCondicionIvaReceptorResult;
+
+  if (resp?.Errors) {
+    const err = Array.isArray(resp.Errors.Err)
+      ? resp.Errors.Err[0]
+      : resp.Errors.Err;
+    throw new AfipError(
+      `WSFE FEParamGetCondicionIvaReceptor: ${err.Msg}`,
+      err.Code,
+      resp.Errors,
+    );
+  }
+
+  const tipos = resp?.ResultGet?.CondicionIvaReceptorTipo;
+  if (!tipos) {
+    return [];
+  }
+
+  const lista = Array.isArray(tipos) ? tipos : [tipos];
+  return lista.map((t) => ({
+    id: t.Id,
+    descripcion: t.Desc,
+    tiposComprobante: t.FchDesde ? {
+      vigenciaDesde: t.FchDesde,
+      vigenciaHasta: t.FchHasta || null,
+    } : null,
+  }));
+}
 
 /**
  * Solicita un CAE a AFIP para una factura electrónica.
@@ -81,6 +128,7 @@ export async function facturar(params) {
     concepto = 1,
     docTipo = 99,
     docNro = '0',
+    condicionIVAReceptorId,
     importe,
     impNeto,
     impIVA = 0,
@@ -130,6 +178,11 @@ export async function facturar(params) {
       <ar:FchVtoPago>${fecha}</ar:FchVtoPago>`;
   }
 
+  // Bloque de condición IVA del receptor (opcional)
+  const condicionIVABlock = condicionIVAReceptorId
+    ? `<ar:CondicionIVAReceptor>${condicionIVAReceptorId}</ar:CondicionIVAReceptor>`
+    : '';
+
   // 3. Armar y enviar FECAESolicitar
   const bodyXml = `<ar:FECAESolicitar xmlns:ar="${NS}">
     ${authBlock(token, sign, cuit)}
@@ -144,6 +197,7 @@ export async function facturar(params) {
           <ar:Concepto>${concepto}</ar:Concepto>
           <ar:DocTipo>${docTipo}</ar:DocTipo>
           <ar:DocNro>${docNro}</ar:DocNro>
+          ${condicionIVABlock}
           <ar:CbteDesde>${cbteNro}</ar:CbteDesde>
           <ar:CbteHasta>${cbteNro}</ar:CbteHasta>
           <ar:CbteFch>${fecha}</ar:CbteFch>
