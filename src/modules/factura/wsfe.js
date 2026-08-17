@@ -180,7 +180,7 @@ export async function facturar(params) {
 
   // Bloque de condición IVA del receptor (opcional)
   const condicionIVABlock = condicionIVAReceptorId
-    ? `<ar:CondicionIVAReceptor>${condicionIVAReceptorId}</ar:CondicionIVAReceptor>`
+    ? `<ar:CondicionIVAReceptorId>${condicionIVAReceptorId}</ar:CondicionIVAReceptorId>`
     : '';
 
   // 3. Armar y enviar FECAESolicitar
